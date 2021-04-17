@@ -5,6 +5,8 @@
 #include <bits/semaphore.h>
 #include <sys/mman.h>
 #include <semaphore.h>
+#include <bits/fcntl.h>
+#include <sys/stat.h>
 
 #include "sbmem.h"
 

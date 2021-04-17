@@ -1,7 +1,7 @@
 
 
 
-int sbmem_init(int segmentsize); 
+int sbmem_init(int segmentsize);
 int sbmem_remove(); 
 
 int sbmem_open(); 
