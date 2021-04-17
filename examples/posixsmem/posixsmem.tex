@@ -1,0 +1,145 @@
+\section{POSIX Shared Memory}
+
+POSIX shared memory API includes a set of functions that you can use
+to create and use a shared memory region (segment) among processes.
+
+Note that even though all processes are in memory and sharing the RAM
+chip, they normally sit in non-overlapping regions of physical
+memory. This is because each process has its own address space and the
+address spaces of processes are mapped to different regions of
+physical memory. When a shared segment is created, however, the
+processes can share a portion of their address spaces and in this way
+can all access the portion of physical memory.
+
+We start by showing a simple two-process application. One process
+creates shared memory segment of size 512 bytes and puts 100 small
+integers there (each integer is 1 byte). The other process attaches to
+the shared memory segment and reads those integers and prints them
+out. To keep the programs short, we are not doing any error checking,
+which must be done in a robust implementation.
+
+Below is the code of the process putting integers to the shared
+segment.
+
+\VerbatimInput{posixsmem/simple_p.c}
+
+Below is the code of the process retrieving the integers from the
+shared segment and printing them out.
+
+\VerbatimInput{posixsmem/simple_c.c}
+
+Below is a Makefile to compile them. The same Makefile is used to
+compile the next application we show. Note the we use the -lrt
+compiler option to link the programs with the real-time (rt) library
+that implements the shared memory API for Linux.
+
+\VerbatimInput{posixsmem/Makefile}
+
+Next, we provide the implementation of the classical producer-consumer
+application using POSIX shared memory.  Producer and consumer
+processes share a memory segment in which a buffer and three variables
+are sitting: in, out, and count.
+
+This solution is not free of race conditions. It can have race
+conditions due to simultaneous access to shared data by more than one
+process. But we are just ignoring this possibility at the moment. Most
+of the time the program will run correctly.
+
+In this example, we need to run the producer process first, since it
+creates a shared segment. Then the consumer is run. Producer will
+start generating and sending items (integers in this case) through the
+shared segment to the consumer process. The consumer process will
+retrieve the items from the shared memory and print them out.
+
+Below is the header file {\tt commondefs.h} that includes the common
+definitions used by the producer program and consumer program.
+
+\VerbatimInput{posixsmem/commondefs.h}
+
+In the header file, we define a structure in which we define the
+variables (fields) that will be sitting in the shared memory
+segment. Those fields are: a buffer and the variables in and out.  In
+our program, we will define a pointer variable pointing to this
+structure and that pointer will be initialized to point to the
+beginning of the shared segment created. In this way, we will easily
+access the content sitting in the shared memory by easily accessing to
+the fields of the structure. The {\tt in} field will point to the
+place (i.e., stores the index of the array entry) where the next
+produced item will be put into. The {\tt out} field points to the
+place in the array from where the next item will be retrieved by the
+consumer process. The {\tt buffer} field of the structure will keep
+the items.
+
+Below is the producer program ({\tt producer.c}).
+
+\VerbatimInput{posixsmem/producer.c} 
+
+In the producer program, we create a shared memory segment using the
+{\tt shm\_open} function (system call). We provide a name for the
+segment to be created. The name we use is defined in the common header
+file.  The shm\_open function returns a file descriptor to the calling
+program. In subsequent related calls we use this file descriptor.  We
+set the size of the shared segment using the {\tt ftruncate}
+function. The same function is used to set the size of a file to some
+value.  In this case, we set the size to the values {\tt
+  SHAREDMEM\_SIZE} defined in our common header file.
+
+Then, the {\tt mmap} function is used to obtain a pointer to the
+beginning of the shared segment. In other words, we use mmap to map
+the shared segment into the address space of the producer program. In
+this way, the producer sees it as part of its address space and
+accesses it by using the returned pointer value.  The pointer value is
+stored in a local variable called {\tt shm\_start} in the producer
+program. We can now use this pointer to access the shared memory
+region. The shm\_start is a void pointer. We define another pointer
+({\tt sdata\_ptr} which is of type {\tt struct shared\_data} and
+therefore can be used to point to such a structure.  We initialize the
+{\tt sdata\_ptr} pointer to point to the shared segment.
+
+\begin{Verbatim}  
+sdata\_ptr = (struct shared\_data *) shm\_start;
+\end{Verbatim} 
+
+In this way, we can then access the shared segment by using the
+pointer and the fields of the structure it is pointing to. So, the
+access to shared memory becomes so easy afterwards. We can say, for
+example:
+
+\begin{Verbatim}
+        sdata_ptr->in = 0;
+        sdata_ptr->out = 0;
+\end{Verbatim} 
+
+With this, we are initializing the part of the shared segment where
+the variables (fields of the structure) in and out are located. Hence
+we are accessing the shared memory by using ordinary memory access
+(pointers and assignment statement). No system calls are done to
+access the shared memory segment.
+
+In the while loop, the producer program produces integers and puts
+them into the buffer in the shared memory using ordinary memory
+accesses.  As we said, no system calls are needed during this time.
+
+Below is the consumer program ({\tt consumer.c}).
+
+\VerbatimInput{posixsmem/consumer.c}
+
+The consumer program opens the shared memory segment by using again
+the {\tt shm\_open} system call. Then it uses mmap to map the stared
+memory into its address space (i.e., gets a pointer to point to the
+beginning of the shared memory). The pointer is stored in the local
+variable {\tt shm\_start}. Another pointer (sdata\_ptr) of type {\tt
+  struct shared\_data} is initialized to this pointer. Hence
+sdata\_pointer can be now be used to access the shared memory in an
+easy manner.
+
+Below is a Makefile that can be used to compile the programs.
+
+\VerbatimInput{posixsmem/Makefile}
+
+We type {\tt make} to compile the programs and obtain two executable
+files: producer and consumer. We run the producer first since it
+creates the shared memory (consumer could create the shared memory as
+well, instead of producer). Then we run the consumer. We can see what
+is going on in the screen.
+
