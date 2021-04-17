@@ -3,14 +3,13 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 # include "sbmem.h"
-#include <sys/stat.h>        /* For mode constants */
 #include <assert.h>
-#include <stdbool.h>
 #include <unistd.h>
-#include <bits/fcntl.h>
-#include <errno.h>
-
 #include <fcntl.h>
+#include <errno.h>
+#include <string.h>
+#include <stdbool.h>
+
 
 #define MIN 5
 #define LEVELS 8
@@ -22,7 +21,9 @@
 #define MIN_REQUEST_SIZE 128
 #define MAX_REQUEST_SIZE 4096
 
+#define SHR_MEM_NAME "/memsegname"
 
+#define MAX_PROCESS_COUNT 10
 enum flag {
     Free, Taken
 };
@@ -47,11 +48,11 @@ struct head *new() {
     assert(((long int) new & 0xfff) == 0); // 12 l a s t b i t s s h o ul d be z e r o
     new->status = Free;
     new->level = LEVELS - 1;
-    // todo: Look-up the man pages for mmap() and see what the arguments mean.
     //When you extend the implementation to handle larger blocks you will have
     //to change these parameters.
     return new;
 }
+
 
 //Given a block we want to find the buddy
 // We do this by toggling the bit
@@ -124,51 +125,50 @@ void bfree(void *memory) {
 
 // Define a name for your shared memory; you can give any name that start with a slash character; it will be like a filename.
 
-// Define semaphore(s)
+// todo: Define semaphore(s)
 
 // Define your stuctures and variables. 
+void *shm_start;
+struct SegmentMetaData {
+    int segmentSize;
+    int processCount;
+    pid_t processPid[MAX_PROCESS_COUNT];
+};
 
-// todo: add semaphore
 
-#define SHR_MEM_NAME "/memsegname"
 
 int sbmem_init(int segmentsize) {
 
-    int fd;
-    void *sbmem_ptr;
-
     // check if segmentsize value is valid
     if (segmentsize < MIN_SEGMENT_SIZE || segmentsize > MAX_SEGMENT_SIZE) {
-        fprintf(STDERR_FILENO, "Error: Invalid segment size.");
+        fprintf(stderr, "Error: Invalid segment size.");
         return -1;
     }
 
-    fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
+    int fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
+
     // check if a shared segment is already allocated
     if (fd == -1) {
         // if previously allocated, destroy the previous segment
-        if (errno == EEXIST) { // todo: test this code.
+        if (errno == EEXIST) { // works.
+            fprintf(stderr, "sbmem_init, Error: %s\n", strerror(errno));
             sbmem_remove();
             fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
         } else {
+            fprintf(stderr, "sbmem_init, Unknown Error: %s", strerror(errno)); // todo: remove this.
             return -1;
         }
     }
 
-    // adjust the new segment
+    // set this size of the memory
     ftruncate(fd, segmentsize);
+    // todo: store relevant memory information (possibly in connection to the offset value)
+    struct SegmentMetaData *meta = (struct SegmentMetaData *) sbmem_alloc(sizeof(struct SegmentMetaData));
+    meta->segmentSize = segmentsize;
+    meta->processCount = 0;
 
-    // mmap explanation - remove later
-    // addr: The starting address for the new mapping is specified in addr. If addr is NULL,
-    // then the kernel chooses the (page-aligned) address at which to create the mapping
-    // prot: access modifier for the selected memory; read allows read, write allows write;
-    // exec allow execution; none removes all permissions
-    // MAP_SHARED: changes made in the segment by one of the processes affect other processes as well. You can also set all to be private.
-    // This is offset from where the file mapping started. In simple terms, the
-    // mapping connects to (offset) to (offset+length-1) bytes for the file open on fd.
-    sbmem_ptr = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    close(fd);
-
+    close(fd); // we no longer need the fd
+    return 0;
 
     // todo: store relevant memory information
 
@@ -180,9 +180,46 @@ int sbmem_remove() {
     return (0);
 }
 
-int sbmem_open() {
+void *openSharedMemory() {
+    int fd = shm_open(SHR_MEM_NAME, O_RDWR, 0660);
 
-    return (0);
+    // first, map with the minimum segment size to get the actual segment size
+    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
+                                0);
+    if (temp_shm_start == MAP_FAILED) {
+        fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
+        exit(1);
+    }
+    struct SegmentMetaData *metaData = (struct SegmentMetaData *) temp_shm_start;
+
+    // check if the process can access the library
+    int processCount = metaData->processCount;
+    if (processCount >= MAX_PROCESS_COUNT) {
+        return -1;
+    }
+
+    int actualSegmentSize = metaData->segmentSize; // todo: read the actual segment siz
+
+    munmap(temp_shm_start, MIN_SEGMENT_SIZE);
+
+    // map with the actual segment size
+    temp_shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // todo addr degisecek mi
+    if (temp_shm_start == MAP_FAILED) {
+        fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
+        exit(1);
+    }
+    return temp_shm_start;
+}
+
+int sbmem_open() {
+    // get the file descriptor to the same shared memory segment
+    shm_start = openSharedMemory();
+    struct SegmentMetaData *metaData = (struct SegmentMetaData *) shm_start;
+
+    pid_t pid = getpid();
+    metaData->processPid[metaData->processCount] = pid;
+    metaData->processCount++;
+    return 0;
 }
 
 

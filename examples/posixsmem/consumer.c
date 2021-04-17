@@ -10,79 +10,77 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/mman.h>
-       
+
 #include "commondefs.h"
 
 int
-main(int argc, char **argv)
-{
+main(int argc, char **argv) {
 
-	int i;
-	char sharedmem_name[200];
-	int fd;		
+    int i;
+    char sharedmem_name[200];
+    int fd;
 
-	void *shm_start;	
-	struct shared_data *sdata_ptr; 
-	
-	struct stat sbuf;  
-        // attributes of the file referring to the segment 
+    void *shm_start;
+    struct shared_data *sdata_ptr;
 
-	if (argc != 1) {
-		printf("usage: consumer \n");
-		exit(1);
-	}
+    struct stat sbuf;
+    // attributes of the file referring to the segment
 
-	strcpy(sharedmem_name, SHAREDMEM_NAME);
+    if (argc != 1) {
+        printf("usage: consumer \n");
+        exit(1);
+    }
 
-	fd = shm_open(sharedmem_name, O_RDWR, 0660);  
+    strcpy(sharedmem_name, SHAREDMEM_NAME);
 
-	if (fd < 0) {
-		perror("can not open shared memory\n");
-		exit (1); 
-	} else {
-		printf
-		    ("sharedmem open success, fd = %d  \n", fd);
-	}
+    fd = shm_open(sharedmem_name, O_RDWR, 0660);
 
-	fstat(fd, &sbuf);
-	printf("size of sharedmem = %d\n", (int) sbuf.st_size);
+    if (fd < 0) {
+        perror("can not open shared memory\n");
+        exit(1);
+    } else {
+        printf
+                ("sharedmem open success, fd = %d  \n", fd);
+    }
 
-	// map the shared segment into your address space
-	shm_start =
-	    mmap(NULL, sbuf.st_size, 
-		 PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    fstat(fd, &sbuf);
+    printf("size of sharedmem = %d\n", (int) sbuf.st_size);
 
-	if (shm_start < 0) {
-		perror("can not map shared memory \n");
-		exit (1); 
-	} else
-		printf("mapping ok, start address = %lu\n", 
-		       (unsigned long) shm_start);
+    // map the shared segment into your address space
+    shm_start =
+            mmap(NULL, sbuf.st_size,
+                 PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
-	close(fd);
+    if (shm_start < 0) {
+        perror("can not map shared memory \n");
+        exit(1);
+    } else
+        printf("mapping ok, start address = %lu\n",
+               (unsigned long) shm_start);
+
+    close(fd);
 
 
-	sdata_ptr = (struct shared_data *)  shm_start; 
+    sdata_ptr = (struct shared_data *) shm_start;
 
-	while (1) {
-	  
-		while (sdata_ptr->in == sdata_ptr->out) 
-		  ; // buffer is empty -- wait in a busy loop
+    while (1) {
 
-		i = sdata_ptr->buffer[sdata_ptr->out]; 
-		sdata_ptr->out = (sdata_ptr->out + 1) % BUFFER_SIZE; 
-		
-		printf ("consumer retrieved item %d from buffer\n", i); 
+        while (sdata_ptr->in == sdata_ptr->out); // buffer is empty -- wait in a busy loop
 
-		sleep (1); 
+        i = sdata_ptr->buffer[sdata_ptr->out];
+        sdata_ptr->out = (sdata_ptr->out + 1) % BUFFER_SIZE;
 
-		if (i == NUM_ITEMS_TOPASS) 
-			break; 
-	}
+        printf("consumer retrieved item %d from buffer\n", i);
 
-	shm_unlink(sharedmem_name);	
-        // remove the shared segment
+        sleep(1);
 
-	printf("removed the shared memory segment!. bye...\n");
-	exit(0);
+        if (i == NUM_ITEMS_TOPASS)
+            break;
+    }
+
+    shm_unlink(sharedmem_name);
+    // remove the shared segment
+
+    printf("removed the shared memory segment!. bye...\n");
+    exit(0);
 }

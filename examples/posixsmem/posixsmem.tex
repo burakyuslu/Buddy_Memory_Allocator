@@ -36,7 +36,7 @@ that implements the shared memory API for Linux.
 \VerbatimInput{posixsmem/Makefile}
 
 Next, we provide the implementation of the classical producer-consumer
-application using POSIX shared memory.  Producer and consumer
+application using POSIX shared memory. Producer and consumer
 processes share a memory segment in which a buffer and three variables
 are sitting: in, out, and count.
 
@@ -58,7 +58,7 @@ definitions used by the producer program and consumer program.
 
 In the header file, we define a structure in which we define the
 variables (fields) that will be sitting in the shared memory
-segment. Those fields are: a buffer and the variables in and out.  In
+segment. Those fields are: a buffer and the variables in and out. In
 our program, we will define a pointer variable pointing to this
 structure and that pointer will be initialized to point to the
 beginning of the shared segment created. In this way, we will easily
@@ -72,33 +72,33 @@ the items.
 
 Below is the producer program ({\tt producer.c}).
 
-\VerbatimInput{posixsmem/producer.c} 
+\VerbatimInput{posixsmem/producer.c}
 
 In the producer program, we create a shared memory segment using the
-{\tt shm\_open} function (system call). We provide a name for the
+    {\tt shm\_open} function (system call). We provide a name for the
 segment to be created. The name we use is defined in the common header
-file.  The shm\_open function returns a file descriptor to the calling
-program. In subsequent related calls we use this file descriptor.  We
+file. The shm\_open function returns a file descriptor to the calling
+program. In subsequent related calls we use this file descriptor. We
 set the size of the shared segment using the {\tt ftruncate}
 function. The same function is used to set the size of a file to some
-value.  In this case, we set the size to the values {\tt
-  SHAREDMEM\_SIZE} defined in our common header file.
+value. In this case, we set the size to the values {\tt
+SHAREDMEM\_SIZE} defined in our common header file.
 
 Then, the {\tt mmap} function is used to obtain a pointer to the
 beginning of the shared segment. In other words, we use mmap to map
 the shared segment into the address space of the producer program. In
 this way, the producer sees it as part of its address space and
-accesses it by using the returned pointer value.  The pointer value is
+accesses it by using the returned pointer value. The pointer value is
 stored in a local variable called {\tt shm\_start} in the producer
 program. We can now use this pointer to access the shared memory
 region. The shm\_start is a void pointer. We define another pointer
 ({\tt sdata\_ptr} which is of type {\tt struct shared\_data} and
-therefore can be used to point to such a structure.  We initialize the
-{\tt sdata\_ptr} pointer to point to the shared segment.
+therefore can be used to point to such a structure. We initialize the
+    {\tt sdata\_ptr} pointer to point to the shared segment.
 
 \begin{Verbatim}  
 sdata\_ptr = (struct shared\_data *) shm\_start;
-\end{Verbatim} 
+\end{Verbatim}
 
 In this way, we can then access the shared segment by using the
 pointer and the fields of the structure it is pointing to. So, the
@@ -108,7 +108,7 @@ example:
 \begin{Verbatim}
         sdata_ptr->in = 0;
         sdata_ptr->out = 0;
-\end{Verbatim} 
+\end{Verbatim}
 
 With this, we are initializing the part of the shared segment where
 the variables (fields of the structure) in and out are located. Hence
@@ -118,7 +118,7 @@ access the shared memory segment.
 
 In the while loop, the producer program produces integers and puts
 them into the buffer in the shared memory using ordinary memory
-accesses.  As we said, no system calls are needed during this time.
+accesses. As we said, no system calls are needed during this time.
 
 Below is the consumer program ({\tt consumer.c}).
 
@@ -129,7 +129,7 @@ the {\tt shm\_open} system call. Then it uses mmap to map the stared
 memory into its address space (i.e., gets a pointer to point to the
 beginning of the shared memory). The pointer is stored in the local
 variable {\tt shm\_start}. Another pointer (sdata\_ptr) of type {\tt
-  struct shared\_data} is initialized to this pointer. Hence
+struct shared\_data} is initialized to this pointer. Hence
 sdata\_pointer can be now be used to access the shared memory in an
 easy manner.
 

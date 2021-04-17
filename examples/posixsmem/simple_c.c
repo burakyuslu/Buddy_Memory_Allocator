@@ -1,6 +1,6 @@
 /* -*- linux-c -*- */
 /* $Id: simple_c.c,v 1.1 2015/03/04 12:00:03 korpe Exp korpe $ */
-         
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -12,29 +12,28 @@
 #include <sys/mman.h>
 
 int
-main(int argc, char **argv)
-{
-	int fd, i; 
-	void *sptr; 
-	char *p; 
-	char c; 
-	struct stat sbuf;  
+main(int argc, char **argv) {
+    int fd, i;
+    void *sptr;
+    char *p;
+    char c;
+    struct stat sbuf;
 
-	fd = shm_open("/afilename", O_RDWR, 0660);  
-	fstat(fd, &sbuf);
-	sptr = mmap(NULL, sbuf.st_size, 
-		    PROT_READ | PROT_WRITE, MAP_SHARED, 
-		    fd, 0);
-	close(fd);
-	p = (char *)sptr; 
-	
-	for (i=0; i<100; ++i) {
-		c = p[i]; 
-		printf ("%d ", c); 
-	}
-	printf ("\n");
+    fd = shm_open("/afilename", O_RDWR, 0660);
+    fstat(fd, &sbuf);
+    sptr = mmap(NULL, sbuf.st_size,
+                PROT_READ | PROT_WRITE, MAP_SHARED,
+                fd, 0);
+    close(fd);
+    p = (char *) sptr;
 
-	shm_unlink ("/afilename");	
+    for (i = 0; i < 100; ++i) {
+        c = p[i];
+        printf("%d ", c);
+    }
+    printf("\n");
 
-	exit(0);
+    shm_unlink("/afilename");
+
+    exit(0);
 }

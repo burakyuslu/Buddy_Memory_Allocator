@@ -5,4 +5,4 @@ set(CMAKE_C_STANDARD 99)
 
 add_executable(untitled app.c create_memory_sb.c destroy_memory_sb.c sbmemlib.c)
 
-TARGET_LINK_LIBRARIES(untitled rt pthreads)
+TARGET_LINK_LIBRARIES(untitled rt pthread)

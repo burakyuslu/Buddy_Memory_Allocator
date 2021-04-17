@@ -2,16 +2,15 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <bits/semaphore.h>
 #include <sys/mman.h>
 #include <semaphore.h>
-#include <bits/fcntl.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 
 #include "sbmem.h"
 
 int main() {
-    printf("Hello world!");
+
 //    int i, ret;
 //    char *p;
 //
@@ -45,7 +44,7 @@ void semaphore_usage() {
     // create semaphore
     if (sem_mutex < 0) {
         perror("can not create semaphore\n");
-        exit (1);
+        exit(1);
     }
     printf("sem %s created\n", SEMNAME_MUTEX);
 
