@@ -10,6 +10,12 @@
 #include "sbmem.h"
 
 int main() {
+    sbmem_init(32768);
+    void *p1 = sbmem_alloc(2000);
+    void *p2 = sbmem_alloc(2000);
+    sbmem_free(p1);
+    sbmem_free(p2);
+
 
 //    int i, ret;
 //    char *p;
