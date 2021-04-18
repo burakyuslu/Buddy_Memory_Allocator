@@ -222,6 +222,30 @@ int sbmem_open() {
     return 0;
 }
 
+int findMinimumRequiredLevel(int size) {
+    bool isPowOf2 = false;
+    int overhead = 32; // todo : update this.
+    int necessarySize = size + overhead;
+    int actualMemAllocSize = 0;
+
+    // determine if the size is a power of 2
+    if ((necessarySize != 0) && ((necessarySize & (necessarySize - 1)) == 0)) {
+        isPowOf2 = true;
+        actualMemAllocSize = necessarySize;
+    }
+
+    // if not, round up to the next power of 2
+    int level = 0;
+    if (!isPowOf2) {
+        actualMemAllocSize = 1;
+        while (actualMemAllocSize < necessarySize) {
+            actualMemAllocSize = 2 * actualMemAllocSize;
+        }
+    }
+
+
+}
+
 
 void *sbmem_alloc(int size) {
     return (NULL);
