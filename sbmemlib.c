@@ -10,6 +10,9 @@
 #include <string.h>
 #include <stdbool.h>
 
+#include <semaphore.h>
+
+
 
 #define MIN 7
 #define LEVELS 8
@@ -24,6 +27,10 @@
 #define SHR_MEM_NAME "/memsegname"
 
 #define MAX_PROCESS_COUNT 10
+
+#define SEM_META_NAME "semmeta"
+#define SEM_MEM_NAME "semmem"
+
 struct Block {
     bool allocated;
     short int level;
@@ -31,6 +38,23 @@ struct Block {
     struct Block *prev;
 };
 
+// Define a name for your shared memory; you can give any name that start with a slash character; it will be like a filename.
+
+// todo: Define semaphore(s)
+sem_t* semMeta;
+sem_t* semMem;
+
+// Define your structures and variables.
+void *shm_start;
+struct SegmentMetaData {
+    int segmentSize;
+    int processCount;
+    pid_t processPid[MAX_PROCESS_COUNT];
+};
+
+struct SegmentMetaData *meta; // todo bunun segment'in kendisine kaydedildiginden nasil emin oluyoruz
+
+// todo revise bit numbers in the explanation
 // Given a block we want to find the buddy
 // We do this by toggling the bit
 // that differentiate the address of the block from its buddy. For the 32 byte
@@ -153,6 +177,9 @@ void freeBlock(struct Block *node) {
         insertNode(node, flists);
     } else {
         struct Block *merged = node;
+
+        // TODO BELOW CONDITION INSIDE THE WHILE STATEMENT CAUSES SEGMENTATION FAULT IN THIRD TEST SCRIPT DURING 1/3 OF THE RUNS
+        // buddy'si null iken dereference etmeye calismasi yuzunden oluyor saniyorum
         while (!(myBuddy->allocated)) {
             // remove my buddy from the freelist.
             removeNode(myBuddy, flists);
@@ -176,20 +203,15 @@ void bfree(void *memory) {
     }
 }
 
-// Define a name for your shared memory; you can give any name that start with a slash character; it will be like a filename.
-
-// todo: Define semaphore(s)
-
-// Define your stuctures and variables. 
-void *shm_start;
-struct SegmentMetaData {
-    int segmentSize;
-    int processCount;
-    pid_t processPid[MAX_PROCESS_COUNT];
-};
-
-
+// todo revision init'te yapilmasi gereken bir sey bulamadim semaphore'lar haric
 int sbmem_init(int segmentsize) {
+
+    // semaphores
+    // clean up semaphores with the same names in case it was not done properly before
+    sem_unlink(SEM_META_NAME);
+    sem_unlink(SEM_MEM_NAME);
+
+    // create & initialize the semaphores
 
     // check if segmentsize value is valid
     if (segmentsize < MIN_SEGMENT_SIZE || segmentsize > MAX_SEGMENT_SIZE) {
@@ -202,7 +224,7 @@ int sbmem_init(int segmentsize) {
     // check if a shared segment is already allocated
     if (fd == -1) {
         // if previously allocated, destroy the previous segment
-        if (errno == EEXIST) { // works.
+        if (errno == EEXIST) { // tested - functions correctly
             sbmem_remove();
             fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
         } else {
@@ -214,8 +236,8 @@ int sbmem_init(int segmentsize) {
     // set this size of the memory
     ftruncate(fd, segmentsize);
     // todo: store relevant memory information (possibly in connection to the offset value)
-    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                                0);
+    // todo revision i think all the necessary information is already being stored, can remove todo
+    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
     struct Block *s = (struct Block *) temp_shm_start;
     s->allocated = false;
@@ -224,20 +246,19 @@ int sbmem_init(int segmentsize) {
     s->level = LEVELS;
     flists[LEVELS - 1] = s;
 
-    struct SegmentMetaData *meta = (struct SegmentMetaData *) sbmem_alloc(sizeof(struct SegmentMetaData));
+    // todo revision meta'nin declaretion'ini daha sonra close'da kullanmak icin init'in disina aldim (global)
+    meta = (struct SegmentMetaData *) sbmem_alloc(sizeof(struct SegmentMetaData));
     meta->segmentSize = segmentsize;
     meta->processCount = 0;
 
     close(fd); // we no longer need the fd
     return 0;
-
-    // todo: store relevant memory information
-
-    return (0);
 }
 
 int sbmem_remove() {
+    // todo: deal with all the semaphores
 
+    shm_unlink(SHR_MEM_NAME);
     return (0);
 }
 
@@ -245,8 +266,7 @@ void *openSharedMemory() {
     int fd = shm_open(SHR_MEM_NAME, O_RDWR, 0660);
 
     // first, map with the minimum segment size to get the actual segment size
-    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
-                                0);
+    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (temp_shm_start == MAP_FAILED) {
         fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
         exit(1);
@@ -254,17 +274,19 @@ void *openSharedMemory() {
     struct SegmentMetaData *metaData = (struct SegmentMetaData *) temp_shm_start;
 
     // check if the process can access the library
+    // todo this needs to be moved to sbmem_open
+    // todo otherwise 11th processes open request is returned 0; nothing is allocated (mistake)
     int processCount = metaData->processCount;
     if (processCount >= MAX_PROCESS_COUNT) {
         return -1;
     }
 
-    int actualSegmentSize = metaData->segmentSize; // todo: read the actual segment siz
+    int actualSegmentSize = metaData->segmentSize; // todo: read the actual segment siz Bence cozuldu
 
     munmap(temp_shm_start, MIN_SEGMENT_SIZE);
 
     // map with the actual segment size
-    temp_shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // todo addr degisecek mi
+    temp_shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // todo addr degisecek mi Bence cozuldu
     if (temp_shm_start == MAP_FAILED) {
         fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
         exit(1);
@@ -274,8 +296,8 @@ void *openSharedMemory() {
 
 int sbmem_open() {
     // get the file descriptor to the same shared memory segment
-    shm_start = openSharedMemory();
-    struct SegmentMetaData *metaData = (struct SegmentMetaData *) shm_start;
+    shm_start = openSharedMemory(); // todo revision shm_start'i ilk olarak init'te initialize etmemiz gerekmez mi?
+    struct SegmentMetaData *metaData = (struct SegmentMetaData *) hide(shm_start);
 
     pid_t pid = getpid();
     metaData->processPid[metaData->processCount] = pid;
@@ -283,6 +305,7 @@ int sbmem_open() {
     return 0;
 }
 
+// todo redundant
 int findMinimumRequiredLevel(int size) {
     bool isPowOf2 = false;
     int overhead = 32; // todo : update this.
@@ -303,22 +326,36 @@ int findMinimumRequiredLevel(int size) {
             actualMemAllocSize = 2 * actualMemAllocSize;
         }
     }
-
-
 }
 
 
+// todo revision belki sbmem_alloc ve sbmem_free refactor edilebilir - cagirdiklari fonksiyon iceriye alinabilir
 void *sbmem_alloc(int size) {
-    return (NULL);
+    return alloc(size);
 }
 
 
 void sbmem_free(void *p) {
-
-
+    return bfree(p);
 }
 
+// todo revision
 int sbmem_close() {
+    // remove the process from the processes array
+    // shift the processes in the array such that al processes (their id's) occupy the first processCount indices
+    bool foundProcess = false;
+    pid_t callerId = getpid();
+    for(int i = 0; i < meta->processCount; i++){
+        if( callerId = meta->processPid[i] ){
+            foundProcess = true;
+        }
+        if(foundProcess){
+            meta->processPid[i] = meta->processPid[i + 1];
+        }
+    }
+    meta->processCount--;
 
+    // todo hata veriyor --139
+    // munmap( shm_start, meta->segmentSize);
     return (0);
 }
