@@ -5,13 +5,10 @@
 #include <stdio.h>
 #include "sbmem.h"
 
-// int main()
-// {
-//
+// todo revision - birsey degistirmedim
+// int main() {
 //     sbmem_remove();
-//
-//     printf ("memory segment is removed from the system. System is clean now.\n");
-//     printf ("you can no longer run processes to allocate memory using the library\n");
-//
+//     printf ("Memory segment is removed from the system. System is clean now.\n");
+//     printf ("You can no longer run processes to allocate memory using the library\n");
 //     return (0);
 // }
