@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -9,14 +8,10 @@
 #include <errno.h>
 #include <string.h>
 #include <stdbool.h>
-
 #include <semaphore.h>
 
-
-
 #define MIN 7
-#define LEVELS 8
-#define PAGE 4096
+#define MAX_LEVEL 11
 
 #define MIN_SEGMENT_SIZE 32768
 #define MAX_SEGMENT_SIZE 262144
@@ -24,65 +19,72 @@
 #define MIN_REQUEST_SIZE 128
 #define MAX_REQUEST_SIZE 4096
 
-#define SHR_MEM_NAME "/memsegname"
-
 #define MAX_PROCESS_COUNT 10
 
-#define SEM_META_NAME "semmeta"
-#define SEM_MEM_NAME "semmem"
-
-struct Block {
-    bool allocated;
-    short int level;
-    struct Block *next;
-    struct Block *prev;
-};
 
 // Define a name for your shared memory; you can give any name that start with a slash character; it will be like a filename.
+#define SHR_MEM_NAME "/memsegname"
 
 // todo: Define semaphore(s)
-sem_t* semMeta;
-sem_t* semMem;
+// #define SEM_META_NAME "semmeta"
+#define SEM_MEM_NAME "semmem"
+// sem_t *semMeta;
+sem_t *semMem;
 
 // Define your structures and variables.
-void *shm_start;
-struct SegmentMetaData {
-    int segmentSize;
-    int processCount;
-    pid_t processPid[MAX_PROCESS_COUNT];
+struct overhead {
+    bool tag;
+    int k;
 };
 
-struct SegmentMetaData *meta; // todo bunun segment'in kendisine kaydedildiginden nasil emin oluyoruz
+struct block {
+    bool tag;
+    int k;
+    struct block *front;
+    struct block *back;
+};
 
-// todo revise bit numbers in the explanation
-// Given a block we want to find the buddy
-// We do this by toggling the bit
-// that differentiate the address of the block from its buddy. For the 32 byte
-// blocks, that are on level 0, this means that we should toggle the sixth bit.
-struct Block *buddy(struct Block *block) {
-    int index = block->level;
-    long int mask = 0x1 << (index + MIN);
-    if (index + MIN < 12)
-        return (struct Block *) ((long int) block ^ mask);
-    else
-        return (struct Block *) ((long int) block - mask);
+struct meta {
+    struct block avail[MAX_LEVEL]; // change this to support all segment sizes
+    short int level;
+    void *start;
+    int processCount;
+    int segmentSize;
+    pid_t processPid[10];
+};
+
+void *shm_start;
+struct meta *data;
+
+void *allocateFrom(int k, struct meta *data);
+
+void deallocate(int max_level, struct block *l, struct meta *data);
+
+struct block *buddy(struct block *b, void *base, int k) {
+    long int x = ((long int) b);
+    long int m = 1 << (MIN + k + 1);
+    long int offset = 1 << (MIN + k);
+    long int res = (x - (long int) base) % m;
+    if (res == 0) {
+        return (struct block *) ((long int) b + offset);
+    } else if (res == offset) {
+        return (struct block *) ((long int) b - offset);
+    } else {
+        fprintf(stderr, "kardes kardese boyle yapmaz\n");
+        exit(1);
+    }
 }
 
-struct Block *split(struct Block *block) {
-    int index = block->level - 1;
-    int mask = 0x1 << (index + MIN);
-    struct Block *result = (struct Block *) ((long int) block + mask);
-    return result;
+struct block *show(void *ptr) {
+    return (struct block *) ((long int) ptr - sizeof(struct overhead));
 }
 
-struct Block *primary(struct Block *block) {
-    int index = block->level;
-    long int mask = 0xffffffffffffffff << (1 + index + MIN);
-    return (struct Block *) ((long int) block & mask);
+void *hide(struct block *ptr) {
+    return (void *) ((long int) ptr + sizeof(struct overhead));
 }
 
 int level(int req) {
-    int total = req + (int) sizeof(short int);
+    int total = req + (int) sizeof(struct overhead);
     int i = 0;
     int size = 1 << MIN;
     while (total > size) {
@@ -92,118 +94,6 @@ int level(int req) {
     return i;
 }
 
-void *hide(struct Block *block) {
-    return (void *) (block + 1);
-}
-
-struct Block *show(void *memory) {
-    return ((struct Block *) memory - 1);
-}
-
-struct Block *flists[LEVELS] = {NULL};
-
-void insertNode(struct Block *node, struct Block *list[]) {
-    int index = node->level;
-    node->next = list[index];
-    if (list[index])
-        list[index]->prev = node; // todo: remove if unnecessary.
-    list[index] = node; // bu satir su sekilde olmayacak mi: list[index]->prev = node;
-}
-
-struct Block *find(int index) {
-    if (index < 0) {
-        fprintf(stderr, "ERROR: find gets a negative index\n");
-        exit(1);
-    }
-    // initializtion ???
-    if (index > LEVELS - 1) { // required level cannot be provided.
-        return NULL;
-    } else if (flists[index] != NULL) { // the node with required level exists
-        struct Block *node = flists[index];
-        flists[index] = node->next; // remove the found node from the free list.
-        return node;
-    } else {
-        struct Block *node = find(index + 1); // find the required level recursively.
-        if (node != NULL) {
-            do { // split the bigger blocks to smaller ones. add them to their respective free lists.
-                struct Block *myBuddy = split(node);
-                // todo: initialization
-                node->level--;
-                myBuddy->allocated = false;
-                myBuddy->level = node->level;
-                insertNode(myBuddy, flists);
-            } while (node->level > index);
-            return node;
-        }
-    }
-    return NULL;
-}
-
-void *alloc(int size) {
-    if (size == 0) {
-        return NULL;
-    }
-    int index = level(size);
-    struct Block *node = find(index);
-    if (node == NULL) {
-        return NULL;
-    } else {
-        node->allocated = true;
-        return hide(node);
-    }
-}
-
-void removeNode(struct Block *node, struct Block *list[]) {
-    int index = node->level;
-    if (list[index] == node) {
-        list[index] = node->next;
-        if (node->next) {
-            node->next->prev = NULL;
-            node->next->next = NULL;
-        }
-    } else {
-        node->prev->next = node->next;
-        if (node->next)
-            node->next->prev = node->prev;
-    }
-    node->prev = NULL;
-    node->next = NULL;
-}
-
-void freeBlock(struct Block *node) {
-    struct Block *myBuddy = buddy(node);
-    if (myBuddy->allocated) { // todo remove allocated boolean later.
-        node->allocated = false;
-        insertNode(node, flists);
-    } else {
-        struct Block *merged = node;
-
-        // TODO BELOW CONDITION INSIDE THE WHILE STATEMENT CAUSES SEGMENTATION FAULT IN THIRD TEST SCRIPT DURING 1/3 OF THE RUNS
-        // buddy'si null iken dereference etmeye calismasi yuzunden oluyor saniyorum
-        while (!(myBuddy->allocated)) {
-            // remove my buddy from the freelist.
-            removeNode(myBuddy, flists);
-
-            merged = primary(node);
-            node->allocated = false;
-            merged->level++;
-            merged->allocated = false;
-
-            // add larger block to the freelist.
-            myBuddy = buddy(merged);
-        }
-        insertNode(merged, flists);
-    }
-}
-
-void bfree(void *memory) {
-    if (memory != NULL) {
-        struct Block *block = show(memory);
-        freeBlock(block);
-    }
-}
-
-// todo revision init'te yapilmasi gereken bir sey bulamadim semaphore'lar haric
 int sbmem_init(int segmentsize) {
 
     // semaphores
@@ -225,7 +115,7 @@ int sbmem_init(int segmentsize) {
     if (fd == -1) {
         // if previously allocated, destroy the previous segment
         if (errno == EEXIST) { // tested - functions correctly
-            sbmem_remove();
+            shm_unlink(SHR_MEM_NAME);
             fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
         } else {
             fprintf(stderr, "sbmem_init, Unknown Error: %s", strerror(errno)); // todo: remove this.
@@ -235,21 +125,32 @@ int sbmem_init(int segmentsize) {
 
     // set this size of the memory
     ftruncate(fd, segmentsize);
-    // todo: store relevant memory information (possibly in connection to the offset value)
-    // todo revision i think all the necessary information is already being stored, can remove todo
-    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED , fd, 0);
+    struct block *base = temp_shm_start;
+    int m = level(segmentsize) - 1;
+    base->front = base;
+    base->back = base;
+    base->tag = true;
+    base->k = m;
+    data = (struct meta *) ((long int) base + sizeof(struct block));
+    data->level = (short int) m;
+    data->start = base;
+    data->processCount = 0;
+    data->segmentSize = segmentsize;
 
-    struct Block *s = (struct Block *) temp_shm_start;
-    s->allocated = false;
-    s->next = NULL;
-    s->prev = NULL;
-    s->level = LEVELS;
-    flists[LEVELS - 1] = s;
-
-    // todo revision meta'nin declaretion'ini daha sonra close'da kullanmak icin init'in disina aldim (global)
-    meta = (struct SegmentMetaData *) sbmem_alloc(sizeof(struct SegmentMetaData));
-    meta->segmentSize = segmentsize;
-    meta->processCount = 0;
+    for (int i = 0; i < m; i++) {
+        data->avail[i].k = -1;
+        data->avail[i].front = &(data->avail[i]);
+        data->avail[i].back = &(data->avail[i]);
+    }
+    data->avail[m].tag = true;
+    data->avail[m].k = -1;
+    data->avail[m].front = base;
+    data->avail[m].back = base;
+    data->start = base;
+    base->front = &(data->avail[m]);
+    base->back = &(data->avail[m]);
+    allocateFrom(1, data);
 
     close(fd); // we no longer need the fd
     return 0;
@@ -262,100 +163,166 @@ int sbmem_remove() {
     return (0);
 }
 
-void *openSharedMemory() {
+
+int sbmem_open() {
+    // get the file descriptor to the same shared memory segment
+    // clean up semaphores with the same names in case it was not done properly before
+    // sem_unlink(SEM_META_NAME);
+    sem_unlink(SEM_MEM_NAME);
+
+    // create & initialize the semaphores
+    semMem = sem_open(SEM_MEM_NAME, O_CREAT, S_IROTH | S_IWOTH, 1);
+
+    sem_wait(semMem);
     int fd = shm_open(SHR_MEM_NAME, O_RDWR, 0660);
 
     // first, map with the minimum segment size to get the actual segment size
-    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE , fd, 0);
     if (temp_shm_start == MAP_FAILED) {
-        fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
+        fprintf(stderr, "cannot map the shared memory1: %s\n", strerror(errno));
         exit(1);
     }
-    struct SegmentMetaData *metaData = (struct SegmentMetaData *) temp_shm_start;
+    data = (struct meta *) ((long int) temp_shm_start + sizeof(struct block));
 
-    // check if the process can access the library
-    // todo this needs to be moved to sbmem_open
-    // todo otherwise 11th processes open request is returned 0; nothing is allocated (mistake)
-    int processCount = metaData->processCount;
+    int processCount = data->processCount;
     if (processCount >= MAX_PROCESS_COUNT) {
         return -1;
     }
 
-    int actualSegmentSize = metaData->segmentSize; // todo: read the actual segment siz Bence cozuldu
+    int actualSegmentSize = data->segmentSize;
 
     munmap(temp_shm_start, MIN_SEGMENT_SIZE);
 
     // map with the actual segment size
-    temp_shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0); // todo addr degisecek mi Bence cozuldu
-    if (temp_shm_start == MAP_FAILED) {
-        fprintf(stderr, "cannot map the shared memory: %s\n", strerror(errno));
+    shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE , fd,
+                     0);
+    data = (struct meta *) ((long int) shm_start + sizeof(struct block));
+    if (shm_start == MAP_FAILED) {
+        fprintf(stderr, "cannot map the shared memory2: %s\n", strerror(errno));
         exit(1);
     }
-    return temp_shm_start;
-}
-
-int sbmem_open() {
-    // get the file descriptor to the same shared memory segment
-    shm_start = openSharedMemory(); // todo revision shm_start'i ilk olarak init'te initialize etmemiz gerekmez mi?
-    struct SegmentMetaData *metaData = (struct SegmentMetaData *) hide(shm_start);
+    close(fd);
 
     pid_t pid = getpid();
-    metaData->processPid[metaData->processCount] = pid;
-    metaData->processCount++;
+    data->processPid[data->processCount] = pid;
+    data->processCount++;
+
+    sem_post(semMem);
     return 0;
 }
 
-// todo redundant
-int findMinimumRequiredLevel(int size) {
-    bool isPowOf2 = false;
-    int overhead = 32; // todo : update this.
-    int necessarySize = size + overhead;
-    int actualMemAllocSize = 0;
+void *allocateFrom(int k, struct meta *data) {
+    // R1. Find block.
+    int j;
+    for (j = k; data->avail[j].front == &(data->avail[j]) && j <= data->level; j++);
+    if (j > data->level) return NULL;
 
-    // determine if the size is a power of 2
-    if ((necessarySize != 0) && ((necessarySize & (necessarySize - 1)) == 0)) {
-        isPowOf2 = true;
-        actualMemAllocSize = necessarySize;
-    }
+    // R2. Remove from list.
+    struct block *avail = data->avail;
+    struct block *l = avail[j].back;
+    struct block *p = l->back;
+    avail[j].back = p;
+    p->front = &(avail[j]);
+    l->tag = false;
 
-    // if not, round up to the next power of 2
-    int level = 0;
-    if (!isPowOf2) {
-        actualMemAllocSize = 1;
-        while (actualMemAllocSize < necessarySize) {
-            actualMemAllocSize = 2 * actualMemAllocSize;
-        }
+    // R3. split required?
+    if (j == k) return l; // no
+
+    while (j > k) { // R3 and R4. Split and split required
+        j--;
+        p = (struct block *) ((long int) l + (1 << (MIN + j)));
+        p->tag = true;
+        p->k = j;
+        p->front = &(avail[j]);
+        p->back = &(avail[j]);
+        avail[j].front = p;
+        avail[j].back = p;
     }
+    l->k = k;
+    l->tag = false;
+    l->back = NULL;
+    l->front = NULL;
+    return l;
 }
 
-
-// todo revision belki sbmem_alloc ve sbmem_free refactor edilebilir - cagirdiklari fonksiyon iceriye alinabilir
 void *sbmem_alloc(int size) {
-    return alloc(size);
+
+    if (size < MIN_REQUEST_SIZE || size > MAX_REQUEST_SIZE)
+        return NULL;
+    if (data == NULL) {
+        fprintf(stderr, "Meta data is null in sbmem_alloc\n");
+    }
+    if (shm_start == NULL) {
+        shm_start = data->start;
+    }
+    sem_post(semMem);
+    sem_wait(semMem);
+    printf("data: %ld\n", (long int) data);
+    printf("1pid: %d, requestSize: %d, allocated: %d\n", getpid(), size, 1 << (MIN + level(size)));
+    void *res =  hide(allocateFrom(level(size), data));
+    printf("2pid: %d, requestSize: %d, allocated: %d\n", getpid(), size, 1 << (MIN + level(size)));
+    sem_post(semMem);
+    return res;
 }
 
+void deallocate(int max_level, struct block *l, struct meta *data) {
+    int m = max_level;
+    int k = l->k;
+
+    // S1. Is buddy available
+    struct block *p = buddy(l, data->start, k);
+    while (!(k == m || p->tag == false || (p->tag == true && p->k != k))) {
+        // S2. Combine with buddy.
+        p->back->front = p->front;
+        p->front->back = p->back;
+        k++;
+        if (((long int) p) < ((long int) l))
+            l = p;
+        p = buddy(l, data->start, k);
+
+    }
+
+    // S3. Put on list.
+    struct block *avail = data->avail;
+    l->tag = true;
+    p = avail[k].front;
+    l->front = p;
+    p->back = l;
+    l->k = k;
+    l->back = &(avail[k]);
+    avail[k].front = l;
+
+}
 
 void sbmem_free(void *p) {
-    return bfree(p);
+    sem_wait(semMem);
+    if (p == NULL) {
+        return;
+    }
+    if (data == NULL) {
+        fprintf(stderr, "Meta data is null in sbmem_free\n");
+    }
+    deallocate(data->level, show(p), data);
+    sem_post(semMem);
 }
 
-// todo revision
 int sbmem_close() {
     // remove the process from the processes array
     // shift the processes in the array such that al processes (their id's) occupy the first processCount indices
     bool foundProcess = false;
     pid_t callerId = getpid();
-    for(int i = 0; i < meta->processCount; i++){
-        if( callerId = meta->processPid[i] ){
+    for (int i = 0; i < 10; i++) {
+        if (callerId == data->processPid[i]) {
             foundProcess = true;
         }
-        if(foundProcess){
-            meta->processPid[i] = meta->processPid[i + 1];
+        if (foundProcess && i != 10) {
+            data->processPid[i] = data->processPid[i + 1];
         }
     }
-    meta->processCount--;
+    data->processCount--;
 
-    // todo hata veriyor --139
-    // munmap( shm_start, meta->segmentSize);
-    return (0);
+    munmap(shm_start, data->segmentSize);
+    sem_post(semMem);
+    sem_close(semMem);
+    return 0;
 }
