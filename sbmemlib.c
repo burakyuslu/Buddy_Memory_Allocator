@@ -98,10 +98,13 @@ int sbmem_init(int segmentsize) {
 
     // semaphores
     // clean up semaphores with the same names in case it was not done properly before
-    sem_unlink(SEM_META_NAME);
+    // sem_unlink(SEM_META_NAME);
     sem_unlink(SEM_MEM_NAME);
 
     // create & initialize the semaphores
+    semMem = sem_open(SEM_MEM_NAME, O_CREAT, S_IROTH | S_IWOTH, 1);
+
+    sem_wait(semMem);
 
     // check if segmentsize value is valid
     if (segmentsize < MIN_SEGMENT_SIZE || segmentsize > MAX_SEGMENT_SIZE) {
@@ -153,12 +156,14 @@ int sbmem_init(int segmentsize) {
     allocateFrom(1, data);
 
     close(fd); // we no longer need the fd
+    munmap(temp_shm_start, segmentsize);
+
+    sem_post(semMem);
     return 0;
 }
 
 int sbmem_remove() {
-    // todo: deal with all the semaphores
-
+    sem_unlink(SEM_MEM_NAME);
     shm_unlink(SHR_MEM_NAME);
     return (0);
 }
@@ -307,6 +312,8 @@ void sbmem_free(void *p) {
 }
 
 int sbmem_close() {
+    sem_wait(semMem);
+
     // remove the process from the processes array
     // shift the processes in the array such that al processes (their id's) occupy the first processCount indices
     bool foundProcess = false;
