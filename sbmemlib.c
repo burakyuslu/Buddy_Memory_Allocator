@@ -21,13 +21,9 @@
 
 #define MAX_PROCESS_COUNT 10
 
-
-// Define a name for your shared memory; you can give any name that start with a slash character; it will be like a filename.
 #define SHR_MEM_NAME "/memsegname"
 
-// todo: Define semaphore(s)
-// #define SEM_META_NAME "semmeta"
-#define SEM_MEM_NAME "semmem"
+#define MEM_SMP_NAME "/semaphore"
 // sem_t *semMeta;
 sem_t *semMem;
 
@@ -45,7 +41,7 @@ struct block {
 };
 
 struct meta {
-    struct block avail[MAX_LEVEL]; // change this to support all segment sizes
+    struct block avail[MAX_LEVEL + 1]; // change this to support all segment sizes
     short int level;
     void *start;
     int processCount;
@@ -70,7 +66,7 @@ struct block *buddy(struct block *b, void *base, int k) {
     } else if (res == offset) {
         return (struct block *) ((long int) b - offset);
     } else {
-        fprintf(stderr, "kardes kardese boyle yapmaz\n");
+        fprintf(stderr, "kardes kardese boyle yapmaz, res: %ld, offset: %ld\n,", res, offset);
         exit(1);
     }
 }
@@ -99,12 +95,10 @@ int sbmem_init(int segmentsize) {
     // semaphores
     // clean up semaphores with the same names in case it was not done properly before
     // sem_unlink(SEM_META_NAME);
-    sem_unlink(SEM_MEM_NAME);
+    sem_unlink(MEM_SMP_NAME);
 
     // create & initialize the semaphores
-    semMem = sem_open(SEM_MEM_NAME, O_CREAT, S_IROTH | S_IWOTH, 1);
-
-    sem_wait(semMem);
+    semMem = sem_open(MEM_SMP_NAME, O_CREAT, 0666, 0);
 
     // check if segmentsize value is valid
     if (segmentsize < MIN_SEGMENT_SIZE || segmentsize > MAX_SEGMENT_SIZE) {
@@ -128,8 +122,9 @@ int sbmem_init(int segmentsize) {
 
     // set this size of the memory
     ftruncate(fd, segmentsize);
-    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED , fd, 0);
+    void *temp_shm_start = mmap(NULL, segmentsize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     struct block *base = temp_shm_start;
+    shm_start = base;
     int m = level(segmentsize) - 1;
     base->front = base;
     base->back = base;
@@ -139,31 +134,35 @@ int sbmem_init(int segmentsize) {
     data->level = (short int) m;
     data->start = base;
     data->processCount = 0;
+    printf("sg:%d\n", segmentsize);
     data->segmentSize = segmentsize;
 
     for (int i = 0; i < m; i++) {
         data->avail[i].k = -1;
-        data->avail[i].front = &(data->avail[i]);
-        data->avail[i].back = &(data->avail[i]);
+        data->avail[i].front = (struct block *) ((long int) &(data->avail[i]) - (long int) shm_start);
+        data->avail[i].back = (struct block *) ((long int) &(data->avail[i]) - (long int) shm_start);
     }
     data->avail[m].tag = true;
     data->avail[m].k = -1;
-    data->avail[m].front = base;
-    data->avail[m].back = base;
+    data->avail[m].front = (struct block *) ((long int) base - (long int) shm_start);
     data->start = base;
-    base->front = &(data->avail[m]);
-    base->back = &(data->avail[m]);
+    data->avail[m].back = (struct block *) ((long int) base - (long int) shm_start);
+    base->front = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
+    base->back = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
     allocateFrom(1, data);
 
     close(fd); // we no longer need the fd
+    msync(temp_shm_start, segmentsize, MS_SYNC);
     munmap(temp_shm_start, segmentsize);
 
     sem_post(semMem);
+    sem_close(semMem);
     return 0;
 }
 
 int sbmem_remove() {
-    sem_unlink(SEM_MEM_NAME);
+    sem_close(semMem);
+    sem_unlink(MEM_SMP_NAME);
     shm_unlink(SHR_MEM_NAME);
     return (0);
 }
@@ -173,16 +172,14 @@ int sbmem_open() {
     // get the file descriptor to the same shared memory segment
     // clean up semaphores with the same names in case it was not done properly before
     // sem_unlink(SEM_META_NAME);
-    sem_unlink(SEM_MEM_NAME);
 
     // create & initialize the semaphores
-    semMem = sem_open(SEM_MEM_NAME, O_CREAT, S_IROTH | S_IWOTH, 1);
-
+    semMem = sem_open(MEM_SMP_NAME, O_CREAT, 0666, 1);
     sem_wait(semMem);
     int fd = shm_open(SHR_MEM_NAME, O_RDWR, 0660);
 
     // first, map with the minimum segment size to get the actual segment size
-    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE , fd, 0);
+    void *temp_shm_start = mmap(NULL, MIN_SEGMENT_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (temp_shm_start == MAP_FAILED) {
         fprintf(stderr, "cannot map the shared memory1: %s\n", strerror(errno));
         exit(1);
@@ -199,7 +196,7 @@ int sbmem_open() {
     munmap(temp_shm_start, MIN_SEGMENT_SIZE);
 
     // map with the actual segment size
-    shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED_NOREPLACE , fd,
+    shm_start = mmap(NULL, actualSegmentSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd,
                      0);
     data = (struct meta *) ((long int) shm_start + sizeof(struct block));
     if (shm_start == MAP_FAILED) {
@@ -219,15 +216,19 @@ int sbmem_open() {
 void *allocateFrom(int k, struct meta *data) {
     // R1. Find block.
     int j;
-    for (j = k; data->avail[j].front == &(data->avail[j]) && j <= data->level; j++);
+    for (j = k; j <= data->level; j++) {
+        long int t1 = (long) shm_start + (long) data->avail[j].front;
+        long int t2 = (long) &(data->avail[j]);
+        if (t1 != t2) break;
+    };
     if (j > data->level) return NULL;
 
     // R2. Remove from list.
     struct block *avail = data->avail;
-    struct block *l = avail[j].back;
-    struct block *p = l->back;
-    avail[j].back = p;
-    p->front = &(avail[j]);
+    struct block *l = (struct block *) ((long) shm_start + (long) avail[j].back);
+    struct block *p = (struct block *) ((long) shm_start + (long) l->back);
+    avail[j].back = (struct block *) ((long) p - (long) shm_start);
+    p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
     l->tag = false;
 
     // R3. split required?
@@ -238,10 +239,10 @@ void *allocateFrom(int k, struct meta *data) {
         p = (struct block *) ((long int) l + (1 << (MIN + j)));
         p->tag = true;
         p->k = j;
-        p->front = &(avail[j]);
-        p->back = &(avail[j]);
-        avail[j].front = p;
-        avail[j].back = p;
+        p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
+        p->back = (struct block *) ((long) &(avail[j]) - (long) shm_start);
+        avail[j].front = (struct block *) ((long) p - (long) shm_start);
+        avail[j].back = (struct block *) ((long) p - (long) shm_start);
     }
     l->k = k;
     l->tag = false;
@@ -260,12 +261,8 @@ void *sbmem_alloc(int size) {
     if (shm_start == NULL) {
         shm_start = data->start;
     }
-    sem_post(semMem);
     sem_wait(semMem);
-    printf("data: %ld\n", (long int) data);
-    printf("1pid: %d, requestSize: %d, allocated: %d\n", getpid(), size, 1 << (MIN + level(size)));
-    void *res =  hide(allocateFrom(level(size), data));
-    printf("2pid: %d, requestSize: %d, allocated: %d\n", getpid(), size, 1 << (MIN + level(size)));
+    void *res = hide(allocateFrom(level(size), data));
     sem_post(semMem);
     return res;
 }
@@ -275,15 +272,15 @@ void deallocate(int max_level, struct block *l, struct meta *data) {
     int k = l->k;
 
     // S1. Is buddy available
-    struct block *p = buddy(l, data->start, k);
+    struct block *p = buddy(l, shm_start, k);
     while (!(k == m || p->tag == false || (p->tag == true && p->k != k))) {
         // S2. Combine with buddy.
-        p->back->front = p->front;
-        p->front->back = p->back;
+        ((struct block *) ((long) shm_start + (long) p->back))->front = p->front;
+        ((struct block *) ((long) shm_start + (long) p->front))->back = p->back;
         k++;
         if (((long int) p) < ((long int) l))
             l = p;
-        p = buddy(l, data->start, k);
+        p = buddy(l, shm_start, k);
 
     }
 
@@ -292,11 +289,10 @@ void deallocate(int max_level, struct block *l, struct meta *data) {
     l->tag = true;
     p = avail[k].front;
     l->front = p;
-    p->back = l;
+    ((struct block *) ((long) shm_start + (long) p))->back = (struct block *) ((long) l - (long) shm_start);
     l->k = k;
-    l->back = &(avail[k]);
-    avail[k].front = l;
-
+    l->back = (struct block *) ((long) &(avail[k]) - (long) shm_start);
+    avail[k].front = (struct block *) ((long) l - (long) shm_start);
 }
 
 void sbmem_free(void *p) {

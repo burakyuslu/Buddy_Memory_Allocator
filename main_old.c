@@ -31,18 +31,16 @@ struct block *buddy(struct block *b, void *base, int k);
 
 void *allocateFrom(int k, struct meta *data);
 
-void *shm_start;
-
 void deallocate(int max_level, struct block *l, struct meta *data) {
     int m = max_level;
     int k = l->k;
 
     // S1. Is buddy available
-    struct block *p = buddy(l, shm_start, k);
+    struct block *p = buddy(l, data->start, k);
     while (!(k == m || p->tag == false || (p->tag == true && p->k != k))) {
         // S2. Combine with buddy.
-        ((struct block *) ((long) shm_start + (long) p->back))->front = p->front;
-        ((struct block *) ((long) shm_start + (long) p->front))->back = p->back;
+        p->back->front = p->front;
+        p->front->back = p->back;
         k++;
         if (((long int) p) < ((long int) l))
             l = p;
@@ -55,10 +53,10 @@ void deallocate(int max_level, struct block *l, struct meta *data) {
     l->tag = true;
     p = avail[k].front;
     l->front = p;
-    ((struct block *) ((long) shm_start + (long) p))->back = (struct block *) ((long) l - (long) shm_start);
+    p->back = l;
     l->k = k;
-    l->back = (struct block *) ((long) &(avail[k]) - (long) shm_start);
-    avail[k].front = (struct block *) ((long) l - (long) shm_start);
+    l->back = &(avail[k]);
+    avail[k].front = l;
 
 }
 
@@ -76,7 +74,6 @@ int level(int req) {
 int main() {
     void *mem = malloc(1024 * 32);
     struct block *base = (struct block *) mem;
-    shm_start = mem;
     int m = 8;
     base->front = base;
     base->back = base;
@@ -87,16 +84,16 @@ int main() {
     printf("%d\n", 1 << 1);
     for (int i = 0; i < m; i++) {
         data->avail[i].k = -1;
-        data->avail[i].front = (struct block *) ((long int) &(data->avail[i]) - (long int) shm_start);
-        data->avail[i].back = (struct block *) ((long int) &(data->avail[i]) - (long int) shm_start);
+        data->avail[i].front = &(data->avail[i]);
+        data->avail[i].back = &(data->avail[i]);
     }
     data->avail[m].tag = true;
     data->avail[m].k = -1;
-    data->avail[m].front = (struct block *) ((long int) base - (long int) shm_start);
+    data->avail[m].front = base;
+    data->avail[m].back = base;
     data->start = base;
-    data->avail[m].back = (struct block *) ((long int) base - (long int) shm_start);
-    base->front = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
-    base->back = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
+    base->front = &(data->avail[m]);
+    base->back = &(data->avail[m]);
     struct block *allocated = allocateFrom(1, data);
     void *p1 = allocateFrom(level(2333), data);
     void *p2 = allocateFrom(level(1023), data);
@@ -115,19 +112,15 @@ int main() {
 void *allocateFrom(int k, struct meta *data) {
     // R1. Find block.
     int j;
-    for (j = k; j <= data->level; j++) {
-        long int t1 = (long) shm_start + (long) data->avail[j].front;
-        long int t2 = (long) &(data->avail[j]);
-        if (t1 != t2) break;
-    };
+    for (j = k; data->avail[j].front == &(data->avail[j]) && j <= data->level; j++);
     if (j > data->level) return NULL;
 
     // R2. Remove from list.
     struct block *avail = data->avail;
-    struct block *l = (struct block *) ((long) shm_start + (long) avail[j].back);
-    struct block *p = (struct block *) ((long) shm_start + (long) l->back);
-    avail[j].back = (struct block *) ((long) p - (long) shm_start);
-    p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
+    struct block *l = avail[j].back;
+    struct block *p = l->back;
+    avail[j].back = p;
+    p->front = &(avail[j]);
     l->tag = false;
 
     // R3. split required?
@@ -138,10 +131,10 @@ void *allocateFrom(int k, struct meta *data) {
         p = (struct block *) ((long int) l + (1 << (MIN + j)));
         p->tag = true;
         p->k = j;
-        p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
-        p->back = (struct block *) ((long) &(avail[j]) - (long) shm_start);
-        avail[j].front = (struct block *) ((long) p - (long) shm_start);
-        avail[j].back = (struct block *) ((long) p - (long) shm_start);
+        p->front = &(avail[j]);
+        p->back = &(avail[j]);
+        avail[j].front = p;
+        avail[j].back = p;
     }
     l->k = k;
     l->tag = false;
