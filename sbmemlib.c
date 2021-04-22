@@ -90,21 +90,21 @@ int level(int req) {
     return i;
 }
 
+long fragmentation = 0;
+
 int sbmem_init(int segmentsize) {
-
-    // semaphores
-    // clean up semaphores with the same names in case it was not done properly before
-    // sem_unlink(SEM_META_NAME);
-    sem_unlink(MEM_SMP_NAME);
-
-    // create & initialize the semaphores
-    semMem = sem_open(MEM_SMP_NAME, O_CREAT, 0666, 0);
-
+    fragmentation = 0;
     // check if segmentsize value is valid
     if (segmentsize < MIN_SEGMENT_SIZE || segmentsize > MAX_SEGMENT_SIZE) {
         fprintf(stderr, "Error: Invalid segment size.");
         return -1;
     }
+
+    // clean up semaphores with the same names in case it was not done properly before
+    sem_unlink(MEM_SMP_NAME);
+
+    // create & initialize the semaphores
+    semMem = sem_open(MEM_SMP_NAME, O_CREAT, 0666, 0);
 
     int fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
 
@@ -115,7 +115,7 @@ int sbmem_init(int segmentsize) {
             shm_unlink(SHR_MEM_NAME);
             fd = shm_open(SHR_MEM_NAME, O_RDWR | O_CREAT | O_EXCL, 0660);
         } else {
-            fprintf(stderr, "sbmem_init, Unknown Error: %s", strerror(errno)); // todo: remove this.
+            fprintf(stderr, "sbmem_init, Unknown Error: %s", strerror(errno));
             return -1;
         }
     }
@@ -134,7 +134,6 @@ int sbmem_init(int segmentsize) {
     data->level = (short int) m;
     data->start = base;
     data->processCount = 0;
-    printf("sg:%d\n", segmentsize);
     data->segmentSize = segmentsize;
 
     for (int i = 0; i < m; i++) {
@@ -149,10 +148,10 @@ int sbmem_init(int segmentsize) {
     data->avail[m].back = (struct block *) ((long int) base - (long int) shm_start);
     base->front = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
     base->back = (struct block *) ((long int) &(data->avail[m]) - (long int) shm_start);
-    allocateFrom(1, data);
+    allocateFrom(2, data);
 
     close(fd); // we no longer need the fd
-    msync(temp_shm_start, segmentsize, MS_SYNC);
+//    msync(temp_shm_start, segmentsize, MS_SYNC);
     munmap(temp_shm_start, segmentsize);
 
     sem_post(semMem);
@@ -170,9 +169,6 @@ int sbmem_remove() {
 
 int sbmem_open() {
     // get the file descriptor to the same shared memory segment
-    // clean up semaphores with the same names in case it was not done properly before
-    // sem_unlink(SEM_META_NAME);
-
     // create & initialize the semaphores
     semMem = sem_open(MEM_SMP_NAME, O_CREAT, 0666, 1);
     sem_wait(semMem);
@@ -209,6 +205,7 @@ int sbmem_open() {
     data->processPid[data->processCount] = pid;
     data->processCount++;
 
+//    msync(temp_shm_start, data->segmentSize, MS_SYNC);
     sem_post(semMem);
     return 0;
 }
@@ -217,7 +214,7 @@ void *allocateFrom(int k, struct meta *data) {
     // R1. Find block.
     int j;
     for (j = k; j <= data->level; j++) {
-        long int t1 = (long) shm_start + (long) data->avail[j].front;
+        long int t1 = (long) shm_start + ((long) data->avail[j].front % (1 << (MIN + data->level)));
         long int t2 = (long) &(data->avail[j]);
         if (t1 != t2) break;
     };
@@ -225,8 +222,9 @@ void *allocateFrom(int k, struct meta *data) {
 
     // R2. Remove from list.
     struct block *avail = data->avail;
-    struct block *l = (struct block *) ((long) shm_start + (long) avail[j].back);
-    struct block *p = (struct block *) ((long) shm_start + (long) l->back);
+    struct block *l = (struct block *) ((long) shm_start +((long) avail[j].back ));
+    struct block *p = (struct block *) ((long) shm_start + ((long) l->back));
+
     avail[j].back = (struct block *) ((long) p - (long) shm_start);
     p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
     l->tag = false;
@@ -239,6 +237,7 @@ void *allocateFrom(int k, struct meta *data) {
         p = (struct block *) ((long int) l + (1 << (MIN + j)));
         p->tag = true;
         p->k = j;
+
         p->front = (struct block *) ((long) &(avail[j]) - (long) shm_start);
         p->back = (struct block *) ((long) &(avail[j]) - (long) shm_start);
         avail[j].front = (struct block *) ((long) p - (long) shm_start);
@@ -262,9 +261,16 @@ void *sbmem_alloc(int size) {
         shm_start = data->start;
     }
     sem_wait(semMem);
-    void *res = hide(allocateFrom(level(size), data));
+    fragmentation += (1 << (MIN + level(size))) - size;
+//    printf("frag: %ld, level: %d, size: %d\n", fragmentation, level(size), size);
+    void *res = allocateFrom(level(size), data);
+//    msync(shm_start, data->segmentSize, MS_SYNC);
     sem_post(semMem);
-    return res;
+//    if (res == NULL) {
+//        printf("InternalFragmentation: %ld\n", fragmentation);
+//        return NULL;
+//    }
+    return hide(res);
 }
 
 void deallocate(int max_level, struct block *l, struct meta *data) {
@@ -304,6 +310,7 @@ void sbmem_free(void *p) {
         fprintf(stderr, "Meta data is null in sbmem_free\n");
     }
     deallocate(data->level, show(p), data);
+//    msync(shm_start, data->segmentSize, MS_SYNC);
     sem_post(semMem);
 }
 
