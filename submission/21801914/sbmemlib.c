@@ -266,10 +266,10 @@ void *sbmem_alloc(int size) {
     void *res = allocateFrom(level(size), data);
 //    msync(shm_start, data->segmentSize, MS_SYNC);
     sem_post(semMem);
-//    if (res == NULL) {
+   if (res == NULL) {
 //        printf(" %ld\n", fragmentation);
-//        return NULL;
-//    }
+       return NULL;
+   }
     return hide(res);
 }
 
@@ -325,7 +325,7 @@ int sbmem_close() {
         if (callerId == data->processPid[i]) {
             foundProcess = true;
         }
-        if (foundProcess && i != 10) {
+        if (foundProcess && i != 9) {
             data->processPid[i] = data->processPid[i + 1];
         }
     }
